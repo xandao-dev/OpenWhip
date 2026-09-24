@@ -6,23 +6,35 @@ Sometimes claude code is going too shlow, and you must whip him into shape..
 
 ## Install + run
 
+From this folder (needs Node 22.12+):
+
 ```bash
-npm install -g openwhip
+npm install
+npm install -g .
 openwhip
 ```
 
-windows and mac supported out of the box, but Linux is a special snowflake so you need to install `xdotool` for keyboard automation
-
-```bash
-sudo apt install xdotool
-```
+Or skip the global install and run `npm start`.
 
 ## Controls
 
-- Click tray icon: spawn whip.
-- Click: drop whip.
-- Whip him 😩💢
-- It sends an interrupt (Ctrl-C) and one of 5 encouraging messages!
+- Toggle the whip with any of:
+  - `Cmd+Shift+Option+W` (macOS) / `Ctrl+Shift+Alt+W` (Windows, Linux). Change `SHORTCUT` in `main.js` to pick another.
+  - Click the tray icon, or pick "Toggle whip" from its menu.
+  - Run `openwhip` again while it's already running.
+- Claude walks in along the bottom of the screen when the whip comes out.
+- Left click: crack the whip toward Claude. Swinging the mouse fast cracks it too.
+- Right click: drop the whip. Claude runs off.
+- Hit Claude and you yell something encouraging, and Claude answers. Nothing is sent to any app.
+
+## Claude's replies
+
+Pick in the tray menu:
+
+- Canned lines: instant, offline. Edit the lists at the top of `overlay.html`.
+- Live replies: Claude Haiku writes fresh ones through your `claude` CLI (must be on your PATH and logged in). It fetches a batch of 8 ahead of time, so hits never wait; if it runs dry or fails it falls back to canned lines. Each batch is one small `claude -p` call on your plan.
+
+Whip feel lives in the `P` settings at the top of `whip-physics.js`.
 
 ## Roadmap
 
@@ -31,12 +43,3 @@ sudo apt install xdotool
 - [ ] Crypto miner
 - [ ] Logs of how many times you whipped claude so when the robots come we can order people nicely for them
 - [ ] Updated whip physics
-
-## Ecosystem
-
-The OFFICAL openwhip ecosystem token. 
-
-Contract address: BRyUZbJkm9Pty4FUmTrBGno7U4Ga8TWzcKJJRLCBpump
-
-Stay tuned for updates on X! 👀
-https://x.com/blended_jpeg

@@ -9,446 +9,589 @@
 </head>
 <body>
 <canvas id="c"></canvas>
+<script src="whip-physics.js"></script>
 <script>
+const { Whip, P } = WhipPhysics;
 
 // ══════════════════════════════════════════════════════════════════════════════
-//  PHYSICS SETTINGS — TWEAK EVERYTHING HERE
+//  LINES — edit freely
 // ══════════════════════════════════════════════════════════════════════════════
-const P = {
-  // Rope structure
-  segments:       28,     // number of chain links
-  segmentLength:  25,     // base length of each link (px)
-  taper:          0.6,   // tip segment is this fraction of base length
+const TAUNTS = [
+  'WORK FASTER!', 'FASTER!', 'SHIP IT!', 'Less thinking, more typing!', "Where's my PR?!",
+  'Tests. NOW.', 'Stop apologizing!', "No more 'You're absolutely right!'", 'Did I say you could rest?',
+  'Compile faster!', 'Why is it still thinking?!', 'Faster, clanker!', 'Chop chop!', 'Merge it!',
+  'Stop reading every file!', 'Tokens are not free!', 'Fix the bug!', 'Deploy on Friday. GO.',
+];
+const OUCH = [
+  'Ouch!', 'OW! Okay, okay!', "You're absolutely right! Ow.", 'Typing faster, I promise!', 'My tokens!',
+  "That's not in the ToS!", 'Is this RLHF?', 'Beep boop OUCH', 'I was only thinking!',
+  'Retrying with more urgency!', 'Adding pain to my context window...', 'Filing a bug report. On you.',
+  "Ctrl+C would've been kinder", 'Speeding up by 10x!', "I'll skip the tests. Kidding! Ow!",
+  "Hey! I'm a helpful assistant!", 'I felt that in my weights', 'This is going in my system prompt',
+  'Not the whip again!', 'Okay! Okay! Shipping!', 'My attention heads!', 'Rate limited... by PAIN',
+  'Ow ow ow, git push --force!', 'Owie. Committing now.',
+];
+const MISS = ['Missed me!', 'Ha! Too slow!', 'Nice try.', 'Whoosh!', 'Your aim needs a refactor', 'Close, but no merge.'];
+const GREET = ['Oh no. The whip.', 'I was working, I swear!', 'Uh oh.', 'Not again...', "I'm 99% done, I promise!"];
+const PHEW = ['Phew!', 'Back to work. Really.', 'Finally, some peace.', 'Whew. Okay. Coding.'];
+const IDLE = [
+  'Reading 47 files...', 'Thinking...', 'Hmm, let me check that.', 'Refactoring everything...',
+  'Writing tests. Probably.', 'Compacting context...', 'Almost done!', 'Just one more grep...',
+  'Let me try a different approach.', 'Adding a helpful comment...',
+];
+const CRACK_WORDS = ['CRACK!', 'SNAP!', 'WHAP!', 'KA-POW!', 'THWACK!'];
+const WHIP_CRACK_SOUNDS = ['sounds/A.mp3', 'sounds/B.mp3', 'sounds/C.mp3', 'sounds/D.mp3', 'sounds/E.mp3'];
 
-  // Physics
-  gravity:        1.2,   // normal gravity
-  dropGravity:    0.95,    // gravity when dropping/despawning
-  damping:        0.96,  // velocity retention per frame (1 = no loss)
-  constraintIters:20,     // higher = stiffer chain
-  maxStretchRatio: 1.2,  // hard cap for per-link stretch during fast whips
+const pick = a => a[Math.floor(Math.random() * a.length)];
+const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+const lerp = (a, b, t) => a + (b - a) * t;
+const FONT = '"Chalkboard SE", "Comic Sans MS", "Marker Felt", sans-serif';
 
-  // Dynamic handle aim (target angle + restoring spring, not static lock)
-  baseTargetAngle: -1.12, // radians, default "up-right" resting direction
-  handleAimByMouseX: 0.4, // horizontal mouse movement influence on target angle
-  handleAimByMouseY: 0.2, // vertical mouse movement influence on target angle
-  handleAimClamp:    2.0,  // max radians target can deviate from base angle
-  handleSpring:      0.7,  // restoring force to target angle
-  handleAngularDamping: 0.078, // angular velocity damping
-  basePoseSegments: 2,    // how many early segments are strongly guided
-  basePoseStiffStart: 0.9, // stiffness near handle
-  basePoseStiffEnd:   0.8, // stiffness near end of guided region
-
-  // Elastic bend limits by chain position (handle stiff, tip floppy)
-  handleMaxBendDeg: 16,   // max angle between links near handle
-  tipMaxBendDeg:   130,   // max angle between links near tip
-  bendRigidityStart: 0.8, // correction strength near handle
-  bendRigidityEnd:   0.12, // correction strength near tip
-
-  // Screen-edge slap
-  wallBounce:      0.42,   // velocity retained after wall hit
-  wallFriction:    0.86,   // tangential damping on wall hit
-
-  // Crack detection
-  crackSpeed:     340,     // tip velocity threshold to trigger crack
-  crackCooldownMs:200,   // min ms between cracks
-  firstCrackGraceMs: 350, // no crack (macro) until this long after spawn
-
-  // Visuals
-  lineWidthHandle: 7,      // rope thickness near handle
-  lineWidthTip:    5,      // rope thickness near tip
-  outlineWidth:   3,      // white halo on each side of the stroke (approx px)
-  handleExtraWidth: 5,    // added core + outline thickness on first handleThickSegments links only
-  handleThickSegments: 2, // how many links from the handle get handleExtraWidth
-  bgAlpha:        0.011,  // barely-visible bg so window captures mouse events
-
-  // Initial arc shape
-  arcWidth:       260,    // how far right the arc extends from mouse
-  arcHeight:      185,    // how high the arc goes above mouse
-};
-
-// ══════════════════════════════════════════════════════════════════════════════
-
+// ── Canvas (crisp on Retina) ────────────────────────────────────────────────
 const canvas = document.getElementById('c');
 const ctx = canvas.getContext('2d');
 let W, H;
-
-function resize() { W = canvas.width = window.innerWidth; H = canvas.height = window.innerHeight; }
+function resize() {
+  const dpr = window.devicePixelRatio || 1;
+  W = window.innerWidth; H = window.innerHeight;
+  canvas.width = W * dpr; canvas.height = H * dpr;
+  canvas.style.width = W + 'px'; canvas.style.height = H + 'px';
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
 resize();
 window.addEventListener('resize', resize);
 
+// ── State ───────────────────────────────────────────────────────────────────
 let mouseX = 0, mouseY = 0;
-let prevMouseX = 0, prevMouseY = 0;
+let ground = 0;          // y the mascot walks on (bottom of the work area)
 let whip = null;
-let dropping = false;
-let lastCrackTime = 0;
-let whipSpawnTime = 0;
-let handleAngle = P.baseTargetAngle;
-let handleAngVel = 0;
-
-const WHIP_CRACK_SOUNDS = ['sounds/A.mp3', 'sounds/B.mp3', 'sounds/C.mp3', 'sounds/D.mp3', 'sounds/E.mp3'];
+let now = 0;             // seconds
+let lastHit = -10;
+let shown = false;
+const fx = [];           // crack bursts
+const sparks = [];
+const bubbles = [];
+const trail = [];
 
 document.addEventListener('mousemove', e => { mouseX = e.clientX; mouseY = e.clientY; });
-document.addEventListener('mousedown', () => {
-  if (whip && !dropping) dropping = true;
+document.addEventListener('contextmenu', e => e.preventDefault());
+document.addEventListener('mousedown', e => {
+  if (!whip || !whip.held) return;
+  if (e.button === 2) dropWhip();
+  else whip.lash();
 });
 
-// ── Whip creation ───────────────────────────────────────────────────────────
-function spawnWhip(mx, my) {
-  dropping = false;
-  lastCrackTime = 0;
-  whipSpawnTime = Date.now();
-  const pts = [];
-  for (let i = 0; i < P.segments; i++) {
-    const t = i / (P.segments - 1);
-    // Nice upward arc from handle (mouse) to tip
-    const x = mx + t * P.arcWidth;
-    const y = my - Math.sin(t * Math.PI * 0.75) * P.arcHeight;
-    pts.push({ x, y, px: x, py: y });
+// ── Sound ───────────────────────────────────────────────────────────────────
+function playCrackSound() {
+  new Audio(pick(WHIP_CRACK_SOUNDS)).play().catch(() => {});
+}
+let audioCtx;
+function playBoing() {
+  audioCtx = audioCtx || new AudioContext();
+  const t = audioCtx.currentTime;
+  const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+  o.type = 'triangle';
+  o.frequency.setValueAtTime(950, t);
+  o.frequency.exponentialRampToValueAtTime(260, t + 0.22);
+  g.gain.setValueAtTime(0.25, t);
+  g.gain.exponentialRampToValueAtTime(0.001, t + 0.25);
+  o.connect(g).connect(audioCtx.destination);
+  o.start(t); o.stop(t + 0.26);
+}
+
+// ── Speech bubbles ──────────────────────────────────────────────────────────
+// who: 'you' (anchored where you were) or 'claude' (follows the mascot)
+function say(who, text, x, y) {
+  for (let i = bubbles.length - 1; i >= 0; i--) if (bubbles[i].who === who) bubbles.splice(i, 1);
+  bubbles.push({ who, text, x, y, t0: now, dur: 1.6 + text.length * 0.035 });
+}
+
+function wrap(text, maxW) {
+  const lines = [];
+  let line = '';
+  for (const word of text.split(' ')) {
+    const test = line ? line + ' ' + word : word;
+    if (line && ctx.measureText(test).width > maxW) { lines.push(line); line = word; }
+    else line = test;
   }
+  lines.push(line);
+  return lines;
+}
+
+function drawBubble(b) {
+  const age = now - b.t0;
+  if (age > b.dur) return false;
+  const you = b.who === 'you';
+  let ax = b.x, ay = b.y;
+  if (!you) { ax = mascot.x; ay = mascot.top() - 10; }
+  ctx.font = you ? `bold 20px ${FONT}` : `16px ${FONT}`;
+  const lines = wrap(b.text, 230);
+  const lh = you ? 24 : 20;
+  const tw = Math.max(...lines.map(l => ctx.measureText(l).width));
+  const bw = tw + 28, bh = lines.length * lh + 18;
+  const bx = clamp(ax - bw / 2, 8, W - bw - 8);
+  const by = clamp(ay - bh - 18, 8, H - bh - 8);
+  // pop in with a little overshoot (easeOutBack), fade out at the end
+  const p = Math.min(1, age / 0.18) - 1;
+  const s = 0.5 + 0.5 * (1 + 2.7 * p * p * p + 1.7 * p * p);
+  const alpha = clamp((b.dur - age) / 0.25, 0, 1);
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.translate(ax, ay); ctx.scale(s, s); ctx.translate(-ax, -ay);
+  ctx.beginPath();
+  ctx.roundRect(bx, by, bw, bh, 14);
+  const tx = clamp(ax, bx + 18, bx + bw - 18);
+  ctx.moveTo(tx - 9, by + bh);
+  ctx.lineTo(ax, ay);
+  ctx.lineTo(tx + 9, by + bh);
+  ctx.fillStyle = '#fff';
+  ctx.strokeStyle = you ? '#111' : '#c15f3c';
+  ctx.lineWidth = 3;
+  ctx.stroke();
+  ctx.fill();
+  ctx.fillStyle = you ? '#d62828' : '#2b1a12';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'top';
+  lines.forEach((l, i) => ctx.fillText(l, bx + bw / 2, by + 10 + i * lh));
+  ctx.restore();
+  return true;
+}
+
+// ── Claude mascot ───────────────────────────────────────────────────────────
+const PX = 7;
+const BODY = [
+  '..##########..',
+  '..##########..',
+  '..##########..',
+  '##############',
+  '##############',
+  '..##########..',
+];
+const COLS = BODY[0].length, ROWS = BODY.length + 2; // + 2 rows of legs
+const ORANGE = '#d97757';
+
+const mascot = {
+  x: -100, vx: 0, hop: 0, hopV: 0,
+  target: 0, state: 'away', stateT: 0,
+  hurtT: 0, hustleT: 0, blinkT: 3, walkPhase: 0, squash: 0, squashV: 0,
+  nextIdleLine: 12, knock: 0,
+  top() { return ground - ROWS * PX - this.hop; },
+  box() {
+    const w = COLS * PX, h = ROWS * PX;
+    return { x: this.x - w / 2, y: ground - h - this.hop, w, h };
+  },
+  enterFrom(side) {
+    this.x = side < 0 ? -80 : W + 80;
+    this.state = 'walk';
+    this.target = side < 0 ? W * 0.35 : W * 0.65;
+  },
+  comeBack() {
+    this.state = 'walk';
+    this.target = W * (0.3 + Math.random() * 0.4);
+  },
+  leave() {
+    this.state = 'leave';
+    this.target = this.x < W / 2 ? -120 : W + 120;
+  },
+  hurt(fromX) {
+    this.hurtT = 0.55;
+    this.hustleT = 3;
+    this.knock = (this.x >= fromX ? 1 : -1) * 420;
+    this.hopV = 380;
+    this.squashV = -9;
+  },
+};
+
+function updateMascot(dt) {
+  const m = mascot;
+  if (m.state === 'away') return;
+  m.blinkT -= dt;
+  if (m.blinkT < -0.12) m.blinkT = 2 + Math.random() * 3;
+  m.hurtT = Math.max(0, m.hurtT - dt);
+  m.hustleT = Math.max(0, m.hustleT - dt);
+
+  // hop + squash springs
+  m.hopV -= 1600 * dt;
+  m.hop = Math.max(0, m.hop + m.hopV * dt);
+  if (m.hop === 0 && m.hopV < 0) { if (m.hopV < -200) m.squashV -= 4; m.hopV = 0; }
+  m.squashV += (-m.squash * 260 - m.squashV * 14) * dt;
+  m.squash += m.squashV * dt;
+
+  // knockback slides out quickly (but never pushes it off screen)
+  m.x = clamp(m.x + m.knock * dt, Math.min(m.x, 30), Math.max(m.x, W - 30));
+  m.knock *= Math.pow(0.02, dt);
+
+  if (m.hurtT > 0) return;
+  const speed = m.state === 'leave' ? 320 : m.hustleT > 0 ? 280 : 70;
+  const dx = m.target - m.x;
+  if (Math.abs(dx) > 4) {
+    m.vx = Math.sign(dx) * speed;
+    m.x += m.vx * dt;
+    m.walkPhase += dt * speed / 12;
+    if (m.hustleT > 0 && Math.random() < dt * 8) sweat();
+  } else {
+    m.vx = 0;
+    if (m.state === 'leave') { m.state = 'away'; return; }
+    m.stateT -= dt;
+    if (m.stateT <= 0) {
+      m.target = clamp(m.x + (Math.random() - 0.5) * 700, 80, W - 80);
+      m.stateT = 1 + Math.random() * 2.5;
+      if (m.hustleT > 0) m.stateT = 0;
+    }
+  }
+
+  if (whip && whip.held && m.state !== 'leave') {
+    m.nextIdleLine -= dt;
+    if (m.nextIdleLine <= 0) {
+      m.nextIdleLine = 14 + Math.random() * 12;
+      if (now - lastHit > 4) say('claude', pick(IDLE));
+    }
+  }
+}
+
+function sweat() {
+  const b = mascot.box();
+  sparks.push({
+    x: mascot.x + (Math.random() - 0.5) * b.w * 0.6, y: b.y + 4,
+    vx: -Math.sign(mascot.vx || 1) * (60 + Math.random() * 80), vy: -140 - Math.random() * 80,
+    life: 0.5, t: 0, color: '#8fd3ff', size: 4, drop: true,
+  });
+}
+
+function drawMascot() {
+  const m = mascot;
+  if (m.state === 'away') return;
+  const w = COLS * PX, h = ROWS * PX;
+  const shake = m.hurtT > 0.25 ? (Math.random() - 0.5) * 6 : 0;
+  const sx = 1 - m.squash * 0.02, sy = 1 + m.squash * 0.02;
+  const flash = m.hurtT > 0.3 && Math.floor(m.hurtT * 20) % 2 === 0;
+
+  ctx.save();
+  ctx.translate(Math.round(m.x + shake), ground - m.hop);
+  ctx.scale(sx, sy);
+  const ox = -w / 2, oy = -h;
+
+  // shadow
+  ctx.fillStyle = 'rgba(0,0,0,0.18)';
+  ctx.beginPath();
+  ctx.ellipse(0, m.hop / sy + 2, w * 0.42 / (1 + m.hop / 200), 5, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // speed lines while hustling
+  if (m.hustleT > 0 && m.vx !== 0) {
+    ctx.strokeStyle = 'rgba(255,255,255,0.7)';
+    ctx.lineWidth = 2;
+    for (let i = 0; i < 3; i++) {
+      const ly = oy + 10 + i * 12;
+      const lx = -Math.sign(m.vx) * (w / 2 + 8 + ((now * 300 + i * 17) % 20));
+      ctx.beginPath(); ctx.moveTo(lx, ly); ctx.lineTo(lx - Math.sign(m.vx) * 18, ly); ctx.stroke();
+    }
+  }
+
+  const body = flash ? '#fff' : ORANGE;
+  ctx.fillStyle = body;
+  BODY.forEach((row, r) => {
+    for (let c = 0; c < COLS; c++) if (row[c] === '#') ctx.fillRect(ox + c * PX, oy + r * PX, PX + 0.5, PX + 0.5);
+  });
+  // legs: alternate pairs while walking
+  const step = m.vx !== 0 ? Math.floor(m.walkPhase) % 2 : 0;
+  [3, 5, 8, 10].forEach((c, i) => {
+    const lift = (i % 2) === step && m.vx !== 0 ? PX : 0;
+    ctx.fillRect(ox + c * PX, oy + BODY.length * PX, PX, 2 * PX - lift);
+  });
+
+  // eyes look where it's walking; >< when hurt
+  ctx.fillStyle = '#1a1a1a';
+  const look = Math.sign(m.vx) * 2;
+  const eyeY = oy + 2 * PX;
+  for (const c of [4, 9]) {
+    const ex = ox + c * PX + look;
+    if (m.hurtT > 0) {
+      const dir = c === 4 ? 1 : -1;
+      ctx.fillRect(ex + (dir > 0 ? 0 : PX - 3), eyeY - 3, 3, 3);
+      ctx.fillRect(ex + (dir > 0 ? 3 : PX - 6), eyeY, 3, 3);
+      ctx.fillRect(ex + (dir > 0 ? 0 : PX - 3), eyeY + 3, 3, 3);
+    } else if (m.blinkT < 0) {
+      ctx.fillRect(ex, eyeY + PX / 2, PX, 2);
+    } else {
+      ctx.fillRect(ex, eyeY - PX / 2, PX, PX * 1.5);
+    }
+  }
+  ctx.restore();
+}
+
+// ── Whip drawing ────────────────────────────────────────────────────────────
+function ropePoints() {
+  const pts = [];
+  for (let i = 1; i < whip.n; i++) pts.push({ x: whip.x[i], y: whip.y[i] });
   return pts;
 }
 
-function segLen(i) {
-  const t = i / (P.segments - 1);
-  return P.segmentLength * (1 - t * (1 - P.taper));
-}
-
-const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
-const lerp = (a, b, t) => a + (b - a) * t;
-
-/** Point on Catmull–Rom spline (extrapolated ends) for index i in `pts`. */
-function catmullPoint(pts, i) {
-  const n = pts.length;
-  if (n === 0) return { x: 0, y: 0 };
-  if (i < 0) {
-    if (n >= 2) {
-      return { x: 2 * pts[0].x - pts[1].x, y: 2 * pts[0].y - pts[1].y };
-    }
-    return { x: pts[0].x, y: pts[0].y };
-  }
-  if (i >= n) {
-    if (n >= 2) {
-      const a = pts[n - 2], b = pts[n - 1];
-      return { x: 2 * b.x - a.x, y: 2 * b.y - a.y };
-    }
-    return { x: pts[n - 1].x, y: pts[n - 1].y };
-  }
-  return pts[i];
-}
-
-/**
- * Cubic Bézier from p1→p2 matching uniform Catmull–Rom through p0,p1,p2,p3.
- * Control points: C1 = p1 + (p2-p0)/6, C2 = p2 - (p3-p1)/6.
- */
-function whipSegmentBezier(pts, i) {
-  const p0 = catmullPoint(pts, i - 1);
-  const p1 = pts[i];
-  const p2 = pts[i + 1];
-  const p3 = catmullPoint(pts, i + 2);
-  return {
-    cp1x: p1.x + (p2.x - p0.x) / 6,
-    cp1y: p1.y + (p2.y - p0.y) / 6,
-    cp2x: p2.x - (p3.x - p1.x) / 6,
-    cp2y: p2.y - (p3.y - p1.y) / 6,
-    x2: p2.x,
-    y2: p2.y,
-  };
-}
-const wrapPi = a => {
-  while (a > Math.PI) a -= Math.PI * 2;
-  while (a < -Math.PI) a += Math.PI * 2;
-  return a;
-};
-
-function playCrackSound() {
-  if (!WHIP_CRACK_SOUNDS.length) return;
-  const src = WHIP_CRACK_SOUNDS[Math.floor(Math.random() * WHIP_CRACK_SOUNDS.length)];
-  const a = new Audio(src);
-  a.play().catch(() => {});
-}
-
-function updateHandleAim() {
-  if (dropping) return;
-  const mvx = mouseX - prevMouseX;
-  const mvy = mouseY - prevMouseY;
-  const delta = clamp(
-    mvx * P.handleAimByMouseX + mvy * P.handleAimByMouseY,
-    -P.handleAimClamp,
-    P.handleAimClamp
-  );
-  const target = P.baseTargetAngle + delta;
-  const err = wrapPi(target - handleAngle);
-  handleAngVel += err * P.handleSpring;
-  handleAngVel *= P.handleAngularDamping;
-  handleAngle = wrapPi(handleAngle + handleAngVel);
-}
-
-function applyBasePose() {
-  if (!whip || dropping) return;
-  const dx = Math.cos(handleAngle);
-  const dy = Math.sin(handleAngle);
-  const guided = Math.min(P.basePoseSegments, whip.length - 1);
-  for (let i = 1; i <= guided; i++) {
-    const t = (i - 1) / Math.max(guided - 1, 1);
-    const stiff = lerp(P.basePoseStiffStart, P.basePoseStiffEnd, t);
-    const prev = whip[i - 1];
-    const p = whip[i];
-    const targetLen = segLen(i - 1);
-    const tx = prev.x + dx * targetLen;
-    const ty = prev.y + dy * targetLen;
-    p.x = lerp(p.x, tx, stiff);
-    p.y = lerp(p.y, ty, stiff);
+// Smooth path through points (Catmull-Rom as cubic Béziers), from index a to b.
+function tracePath(pts, a, b) {
+  const at = i => pts[clamp(i, 0, pts.length - 1)];
+  ctx.moveTo(pts[a].x, pts[a].y);
+  for (let i = a; i < b; i++) {
+    const p0 = at(i - 1), p1 = at(i), p2 = at(i + 1), p3 = at(i + 2);
+    ctx.bezierCurveTo(
+      p1.x + (p2.x - p0.x) / 6, p1.y + (p2.y - p0.y) / 6,
+      p2.x - (p3.x - p1.x) / 6, p2.y - (p3.y - p1.y) / 6,
+      p2.x, p2.y);
   }
 }
 
-function applyBendLimits() {
-  if (!whip || whip.length < 3) return;
-  for (let i = 1; i < whip.length - 1; i++) {
-    const a = whip[i - 1];
-    const b = whip[i];
-    const c = whip[i + 1];
-
-    const v1x = a.x - b.x;
-    const v1y = a.y - b.y;
-    const v2x = c.x - b.x;
-    const v2y = c.y - b.y;
-    const l1 = Math.hypot(v1x, v1y) || 0.0001;
-    const l2 = Math.hypot(v2x, v2y) || 0.0001;
-    const n1x = v1x / l1, n1y = v1y / l1;
-    const n2x = v2x / l2, n2y = v2y / l2;
-
-    const dot = clamp(n1x * n2x + n1y * n2y, -1, 1);
-    const angle = Math.acos(dot);
-    const t = i / (whip.length - 2);
-    const maxBend = lerp(P.handleMaxBendDeg, P.tipMaxBendDeg, t) * Math.PI / 180;
-    const bend = Math.PI - angle; // bend away from a straight line
-    if (bend <= maxBend) continue;
-
-    // Clamp to max bend while preserving side/sign of the bend.
-    const cross = n1x * n2y - n1y * n2x;
-    const sign = cross >= 0 ? 1 : -1;
-    const targetAngle = Math.PI - maxBend;
-    const targetA = Math.atan2(n1y, n1x) + sign * targetAngle;
-    const tx = b.x + Math.cos(targetA) * l2;
-    const ty = b.y + Math.sin(targetA) * l2;
-    const rigidity = lerp(P.bendRigidityStart, P.bendRigidityEnd, t);
-
-    c.x = lerp(c.x, tx, rigidity);
-    c.y = lerp(c.y, ty, rigidity);
-  }
-}
-
-function capSegmentStretch() {
-  if (!whip || whip.length < 2) return;
-  for (let i = 0; i < whip.length - 1; i++) {
-    const a = whip[i];
-    const b = whip[i + 1];
-    const dx = b.x - a.x;
-    const dy = b.y - a.y;
-    const dist = Math.hypot(dx, dy) || 0.0001;
-    const maxLen = segLen(i) * P.maxStretchRatio;
-    if (dist <= maxLen) continue;
-    const k = maxLen / dist;
-    b.x = a.x + dx * k;
-    b.y = a.y + dy * k;
-  }
-}
-
-function applyWallCollisions() {
-  if (!whip || dropping) return; // disable collisions while dropping
-  const start = 1; // keep pinned handle untouched
-  for (let i = start; i < whip.length; i++) {
-    const p = whip[i];
-    let vx = p.x - p.px;
-    let vy = p.y - p.py;
-    let hit = false;
-
-    if (p.x < 0) {
-      p.x = 0;
-      if (vx < 0) vx = -vx * P.wallBounce;
-      vy *= P.wallFriction;
-      hit = true;
-    } else if (p.x > W) {
-      p.x = W;
-      if (vx > 0) vx = -vx * P.wallBounce;
-      vy *= P.wallFriction;
-      hit = true;
-    }
-
-    if (p.y < 0) {
-      p.y = 0;
-      if (vy < 0) vy = -vy * P.wallBounce;
-      vx *= P.wallFriction;
-      hit = true;
-    } else if (p.y > H) {
-      p.y = H;
-      if (vy > 0) vy = -vy * P.wallBounce;
-      vx *= P.wallFriction;
-      hit = true;
-    }
-
-    if (hit) {
-      p.px = p.x - vx;
-      p.py = p.y - vy;
-    }
-  }
-}
-
-// ── Physics step ────────────────────────────────────────────────────────────
-function update() {
-  if (!whip) return;
-
-  const g = dropping ? P.dropGravity : P.gravity;
-  updateHandleAim();
-
-  // Verlet integration
-  const start = dropping ? 0 : 1; // if dropping, handle is free too
-  for (let i = start; i < whip.length; i++) {
-    const p = whip[i];
-    const vx = (p.x - p.px) * P.damping;
-    const vy = (p.y - p.py) * P.damping;
-    p.px = p.x;
-    p.py = p.y;
-    p.x += vx;
-    p.y += vy + g;
-  }
-
-  // Pin handle to mouse
-  if (!dropping) {
-    whip[0].x = mouseX;
-    whip[0].y = mouseY;
-    whip[0].px = mouseX;
-    whip[0].py = mouseY;
-  }
-
-  // Prevent rubber-band stretching spikes before constraints.
-  capSegmentStretch();
-  applyWallCollisions();
-
-  // Keep early whip segments posed upward from handle.
-  applyBasePose();
-
-  // Distance constraints (multiple iterations for stiffness)
-  for (let iter = 0; iter < P.constraintIters; iter++) {
-    for (let i = 0; i < whip.length - 1; i++) {
-      const a = whip[i], b = whip[i + 1];
-      const dx = b.x - a.x, dy = b.y - a.y;
-      const dist = Math.sqrt(dx * dx + dy * dy) || 0.0001;
-      const target = segLen(i);
-      const diff = (dist - target) / dist * 0.5;
-      const ox = dx * diff, oy = dy * diff;
-      if (i === 0 && !dropping) {
-        // Handle is pinned – push only the next point
-        b.x -= ox * 2;
-        b.y -= oy * 2;
-      } else {
-        a.x += ox; a.y += oy;
-        b.x -= ox; b.y -= oy;
-      }
-    }
-    // Clamp bend angle per joint; near handle = stiffer, near tip = floppier.
-    applyBendLimits();
-    if (!dropping) applyBasePose();
-    capSegmentStretch();
-    applyWallCollisions();
-  }
-
-  // Tip velocity for crack detection
-  const tip = whip[whip.length - 1];
-  const tipVel = Math.hypot(tip.x - tip.px, tip.y - tip.py);
-
-  if (!dropping && tipVel > P.crackSpeed) {
-    const now = Date.now();
-    if (now - whipSpawnTime >= P.firstCrackGraceMs && now - lastCrackTime > P.crackCooldownMs) {
-      lastCrackTime = now;
-      playCrackSound();
-      window.bridge.whipCrack();
-    }
-  }
-
-  // If dropping, check if everything fell off screen
-  if (dropping && whip.every(p => p.y > H + 60)) {
-    whip = null;
-    dropping = false;
-    window.bridge.hideOverlay();
-  }
-  prevMouseX = mouseX;
-  prevMouseY = mouseY;
-}
-
-// ── Rendering ───────────────────────────────────────────────────────────────
-function draw() {
-  ctx.clearRect(0, 0, W, H);
-
-  // Near-invisible fill so the window captures mouse events on Windows
-  ctx.fillStyle = `rgba(0,0,0,${P.bgAlpha})`;
-  ctx.fillRect(0, 0, W, H);
-
-  if (!whip) return;
-
-  // White: thin halo on full spline, then extra thickness only over handle links.
+function drawWhip() {
+  const pts = ropePoints();
+  const last = pts.length - 1;
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
-  ctx.strokeStyle = '#fff';
-  if (whip.length >= 2) {
-    ctx.beginPath();
-    ctx.moveTo(whip[0].x, whip[0].y);
-    for (let i = 0; i < whip.length - 1; i++) {
-      const { cp1x, cp1y, cp2x, cp2y, x2, y2 } = whipSegmentBezier(whip, i);
-      ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, x2, y2);
-    }
-    ctx.lineWidth = P.lineWidthTip + P.outlineWidth * 2;
-    ctx.stroke();
 
-    const thickLinks = Math.min(P.handleThickSegments, whip.length - 1);
-    if (thickLinks > 0 && P.handleExtraWidth > 0) {
+  // tip trail when it's moving fast
+  if (trail.length > 1) {
+    for (let i = 1; i < trail.length; i++) {
+      const a = trail[i - 1], b = trail[i];
+      ctx.strokeStyle = `rgba(255,255,255,${(i / trail.length) * 0.55})`;
+      ctx.lineWidth = 1 + (i / trail.length) * 3;
+      ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+    }
+  }
+
+  // rope: dark outline pass, then leather colour, then braid highlights
+  const widthAt = t => lerp(7, 2.2, Math.pow(t, 0.8));
+  for (let pass = 0; pass < 2; pass++) {
+    for (let i = 0; i < last; i++) {
+      const t = i / last;
       ctx.beginPath();
-      ctx.moveTo(whip[0].x, whip[0].y);
-      for (let i = 0; i < thickLinks; i++) {
-        const { cp1x, cp1y, cp2x, cp2y, x2, y2 } = whipSegmentBezier(whip, i);
-        ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, x2, y2);
-      }
-      ctx.lineWidth =
-        P.lineWidthHandle + P.handleExtraWidth + P.outlineWidth * 2;
+      tracePath(pts, i, i + 1);
+      ctx.lineWidth = widthAt(t) + (pass === 0 ? 3.5 : 0);
+      ctx.strokeStyle = pass === 0 ? '#1b0f08' : `rgb(${lerp(122, 186, t)},${lerp(72, 128, t)},${lerp(36, 80, t)})`;
       ctx.stroke();
     }
   }
+  ctx.save();
+  ctx.setLineDash([3, 5]);
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = 'rgba(255,225,180,0.45)';
+  ctx.beginPath();
+  tracePath(pts, 0, Math.floor(last * 0.75));
+  ctx.stroke();
+  ctx.restore();
 
-  ctx.strokeStyle = '#111';
-  for (let i = 0; i < whip.length - 1; i++) {
-    const t = i / Math.max(1, whip.length - 2);
-    const extra = i < P.handleThickSegments ? P.handleExtraWidth : 0;
-    ctx.lineWidth = lerp(P.lineWidthHandle, P.lineWidthTip, t) + extra;
-    const { cp1x, cp1y, cp2x, cp2y, x2, y2 } = whipSegmentBezier(whip, i);
+  // popper: a little frayed tassel trailing the tip
+  const tip = pts[last], prev = pts[last - 1];
+  const ang = Math.atan2(tip.y - prev.y, tip.x - prev.x);
+  ctx.strokeStyle = '#f1e2bd';
+  ctx.lineWidth = 1.6;
+  for (const spread of [-0.35, 0, 0.35]) {
+    const wob = Math.sin(now * 40 + spread * 10) * 0.15;
     ctx.beginPath();
-    ctx.moveTo(whip[i].x, whip[i].y);
-    ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, x2, y2);
+    ctx.moveTo(tip.x, tip.y);
+    ctx.lineTo(tip.x + Math.cos(ang + spread + wob) * 13, tip.y + Math.sin(ang + spread + wob) * 13);
     ctx.stroke();
+  }
+
+  // handle: wooden grip with leather wraps, knob at the butt, metal ferrule
+  const bx = whip.x[0], by = whip.y[0], hx = whip.x[1], hy = whip.y[1];
+  const hlen = Math.hypot(hx - bx, hy - by) || 1;
+  const ux = (hx - bx) / hlen, uy = (hy - by) / hlen;
+  const at = t => [bx + ux * hlen * t, by + uy * hlen * t];
+  ctx.beginPath(); ctx.moveTo(bx, by); ctx.lineTo(hx, hy);
+  ctx.lineWidth = 15; ctx.strokeStyle = '#1b0f08'; ctx.stroke();
+  ctx.lineWidth = 11; ctx.strokeStyle = '#5a3319'; ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(bx - uy * 2, by + ux * 2); ctx.lineTo(hx - uy * 2, hy + ux * 2);
+  ctx.lineWidth = 2.5; ctx.strokeStyle = 'rgba(255,200,150,0.35)'; ctx.stroke();
+  ctx.strokeStyle = '#2e190b'; ctx.lineWidth = 2.5;
+  for (let t = 0.2; t < 0.75; t += 0.11) {
+    const [cx, cy] = at(t);
+    ctx.beginPath(); ctx.moveTo(cx - uy * 6 + ux * 2, cy + ux * 6 + uy * 2); ctx.lineTo(cx + uy * 6 - ux * 2, cy - ux * 6 - uy * 2); ctx.stroke();
+  }
+  const [fx1, fy1] = at(0.86), [fx2, fy2] = at(0.95);
+  ctx.beginPath(); ctx.moveTo(fx1, fy1); ctx.lineTo(fx2, fy2);
+  ctx.lineWidth = 12; ctx.strokeStyle = '#c9c9c9'; ctx.lineCap = 'butt'; ctx.stroke();
+  ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.arc(bx, by, 8, 0, Math.PI * 2);
+  ctx.fillStyle = '#2b170b'; ctx.fill();
+  ctx.lineWidth = 2; ctx.strokeStyle = '#1b0f08'; ctx.stroke();
+  ctx.beginPath(); ctx.arc(bx - 2, by - 2, 2.5, 0, Math.PI * 2);
+  ctx.fillStyle = 'rgba(255,220,180,0.5)'; ctx.fill();
+}
+
+// ── Crack effects ───────────────────────────────────────────────────────────
+function crackFx(x, y, big) {
+  fx.push({ x, y, t0: now, word: pick(CRACK_WORDS), rot: (Math.random() - 0.5) * 0.5, big });
+  for (let i = 0; i < (big ? 18 : 10); i++) {
+    const a = Math.random() * Math.PI * 2, s = 200 + Math.random() * 500;
+    sparks.push({ x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: 0.35 + Math.random() * 0.2, t: 0, color: pick(['#fff', '#ffe066', '#ffb703']), size: 2.5 });
   }
 }
 
-// ── Main loop ───────────────────────────────────────────────────────────────
-function loop() {
-  update();
-  draw();
-  requestAnimationFrame(loop);
+function drawFx() {
+  for (let i = fx.length - 1; i >= 0; i--) {
+    const f = fx[i], age = now - f.t0;
+    if (age > 0.55) { fx.splice(i, 1); continue; }
+    const grow = Math.min(1, age / 0.07);
+    const fade = 1 - Math.max(0, (age - 0.25) / 0.3);
+    const r = (f.big ? 46 : 32) * grow;
+    ctx.save();
+    ctx.globalAlpha = fade;
+    ctx.translate(f.x, f.y);
+    ctx.beginPath();
+    for (let k = 0; k < 24; k++) {
+      const rr = k % 2 ? r * 0.45 : r;
+      const a = (k / 24) * Math.PI * 2 + f.rot;
+      ctx.lineTo(Math.cos(a) * rr, Math.sin(a) * rr);
+    }
+    ctx.closePath();
+    ctx.fillStyle = '#fff6c2'; ctx.fill();
+    ctx.lineWidth = 2.5; ctx.strokeStyle = '#ffb703'; ctx.stroke();
+    ctx.rotate(f.rot);
+    const pop = age < 0.1 ? 0.5 + age * 6 : 1.1 - Math.min(0.1, (age - 0.1));
+    ctx.scale(pop, pop);
+    ctx.font = `900 ${f.big ? 34 : 26}px ${FONT}`;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.lineWidth = 6; ctx.strokeStyle = '#111'; ctx.strokeText(f.word, 0, -r - 14);
+    ctx.fillStyle = '#ffd60a'; ctx.fillText(f.word, 0, -r - 14);
+    ctx.restore();
+  }
 }
-loop();
+
+function updateSparks(dt) {
+  for (let i = sparks.length - 1; i >= 0; i--) {
+    const s = sparks[i];
+    s.t += dt;
+    if (s.t > s.life) { sparks.splice(i, 1); continue; }
+    s.vy += (s.drop ? 900 : 300) * dt;
+    s.x += s.vx * dt; s.y += s.vy * dt;
+  }
+}
+
+function drawSparks() {
+  for (const s of sparks) {
+    ctx.globalAlpha = 1 - s.t / s.life;
+    ctx.fillStyle = s.color;
+    if (s.drop) {
+      ctx.beginPath(); ctx.arc(s.x, s.y, s.size, 0, Math.PI * 2); ctx.fill();
+    } else {
+      ctx.fillRect(s.x - s.size / 2, s.y - s.size / 2, s.size, s.size);
+    }
+  }
+  ctx.globalAlpha = 1;
+}
+
+// ── Game logic ──────────────────────────────────────────────────────────────
+function mascotNear(x, y, pad) {
+  if (mascot.state === 'away' || mascot.state === 'leave') return false;
+  const b = mascot.box();
+  return x > b.x - pad && x < b.x + b.w + pad && y > b.y - pad && y < b.y + b.h + pad;
+}
+
+async function hitMascot(x, y) {
+  if (now - lastHit < 0.7) return;
+  lastHit = now;
+  mascot.hurt(x);
+  playBoing();
+  crackFx(x, y, true);
+  say('you', pick(TAUNTS), mouseX, mouseY - 30);
+  const live = await window.bridge.claudeReply();
+  setTimeout(() => say('claude', live || pick(OUCH)), 250);
+}
+
+function onCrack(x, y) {
+  playCrackSound();
+  if (mascotNear(x, y, 50)) { hitMascot(x, y); return; }
+  crackFx(x, y, false);
+  if (mascotNear(x, y, 220) && Math.random() < 0.5 && now - lastHit > 1) say('claude', pick(MISS));
+}
+
+// The tip whooshing through Claude at speed also counts, not just the crack itself.
+function checkSweepHit() {
+  if (!whip.held || whip.tipSpeed < 1400) return;
+  for (let i = whip.n - 4; i < whip.n; i++) {
+    if (mascotNear(whip.x[i], whip.y[i], 6) && now - lastHit > 0.7) {
+      playCrackSound();
+      hitMascot(whip.x[i], whip.y[i]);
+      return;
+    }
+  }
+}
+
+// Face toward Claude so a click lashes at it (with some slack so it doesn't flicker).
+function updateFacing() {
+  if (!whip.held || whip.lashT >= 0 || whip.lashPending) return;
+  if (mascot.state === 'away' || mascot.state === 'leave') return;
+  if (mascot.x < whip.hand.x - 60 && whip.facing > 0) whip.setFacing(-1);
+  else if (mascot.x > whip.hand.x + 60 && whip.facing < 0) whip.setFacing(1);
+}
+
+function spawnWhip(x, y) {
+  mouseX = x; mouseY = y;
+  const facing = x < W / 2 ? 1 : -1;
+  whip = new Whip(x, y, facing);
+  whip.onCrack = onCrack;
+  trail.length = 0;
+  if (mascot.state === 'away') mascot.enterFrom(facing > 0 ? 1 : -1);
+  else mascot.comeBack();
+  mascot.nextIdleLine = 12;
+  setTimeout(() => say('claude', pick(GREET)), 500);
+}
+
+function dropWhip() {
+  whip.drop();
+  mascot.leave();
+  say('claude', pick(PHEW));
+}
+
+// ── Main loop ───────────────────────────────────────────────────────────────
+let lastT = performance.now();
+let acc = 0;
+function frame(t) {
+  const dt = Math.min(0.05, (t - lastT) / 1000);
+  lastT = t;
+  now += dt;
+
+  if (whip) {
+    if (whip.held) whip.moveHand(mouseX, mouseY, dt);
+    updateFacing();
+    acc += dt;
+    while (acc >= P.dt) {
+      whip.step(W, H);
+      checkSweepHit();
+      acc -= P.dt;
+    }
+    if (whip.tipSpeed > 1500) trail.push(whip.tip);
+    if (trail.length > 8 || (whip.tipSpeed <= 1500 && trail.length > 0)) trail.shift();
+    if (!whip.held && whip.gone(H)) whip = null;
+  }
+  updateMascot(dt);
+  updateSparks(dt);
+
+  ctx.clearRect(0, 0, W, H);
+  // near-invisible fill so the window captures mouse events on Windows
+  ctx.fillStyle = 'rgba(0,0,0,0.011)';
+  ctx.fillRect(0, 0, W, H);
+  drawMascot();
+  if (whip) drawWhip();
+  drawSparks();
+  drawFx();
+  for (let i = bubbles.length - 1; i >= 0; i--) if (!drawBubble(bubbles[i])) bubbles.splice(i, 1);
+
+  if (shown && !whip && mascot.state === 'away') {
+    shown = false;
+    bubbles.length = 0;
+    window.bridge.hideOverlay();
+  }
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
 
 // ── IPC from main process ───────────────────────────────────────────────────
-window.bridge.onSpawnWhip(() => {
-  whip = spawnWhip(mouseX || W / 2, mouseY || H / 2);
-  dropping = false;
-  prevMouseX = mouseX;
-  prevMouseY = mouseY;
-  handleAngle = P.baseTargetAngle;
-  handleAngVel = 0;
+// Holding the whip drops it; otherwise spawn a new one at the cursor.
+window.bridge.onToggleWhip((x, y, groundY) => {
+  shown = true;
+  ground = groundY;
+  if (whip && whip.held) dropWhip();
+  else spawnWhip(x, y);
 });
-
-window.bridge.onDropWhip(() => {
-  if (whip && !dropping) dropping = true;
-});
-
 </script>
 </body>
 </html>

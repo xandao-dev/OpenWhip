@@ -2,12 +2,6 @@
 const path = require('path');
 const { spawn } = require('child_process');
 
-const invokedAs = path.basename(process.argv[1] || '');
-if (invokedAs === 'badclaude' || invokedAs === 'badclaude.cmd') {
-  console.warn('[DEPRECATED] "badclaude" has been renamed to "openwhip".');
-  console.warn('Please run: npm install -g openwhip');
-}
-
 let electronBinary;
 try {
   electronBinary = require('electron');
